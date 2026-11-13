@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lote</title>
+    <style>
+      /* The ground of each mode, so the window never flashes the wrong one while the app loads. */
+      html.light { background: #eff1f5; }
+      html.dark { background: #303446; }
+    </style>
+    <script>
+      // Applies the saved color mode, or the system's, before the first paint (see useColorMode).
+      (function () {
+        var mode = null;
+        try {
+          mode = localStorage.getItem("lote.colorMode");
+        } catch (error) {}
+        if (mode !== "light" && mode !== "dark") {
+          mode = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.classList.add(mode);
+        document.documentElement.style.colorScheme = mode;
+      })();
+    </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
