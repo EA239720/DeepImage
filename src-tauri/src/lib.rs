@@ -1,5 +1,6 @@
 mod download;
 mod folder;
+mod reshape;
 
 use std::path::Path;
 
@@ -8,15 +9,17 @@ use folder::FolderSummary;
 use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
-/// Downloads one URL into `dir`, naming the file `stem` plus the image's extension.
+/// Downloads one URL into `dir`, naming the file `stem` plus the image's extension, and
+/// crops or resizes it first when `fit` asks for it.
 #[tauri::command]
 async fn download_image(
     client: tauri::State<'_, reqwest::Client>,
     url: String,
     dir: String,
     stem: String,
+    fit: Option<reshape::Fit>,
 ) -> Result<Outcome, DownloadError> {
-    download::fetch_image(&client, &url, Path::new(&dir), &stem).await
+    download::fetch_image(&client, &url, Path::new(&dir), &stem, fit).await
 }
 
 /// Shows `dir` in the system file manager.

@@ -4,7 +4,7 @@ import { ConfigPanel } from "./components/ConfigPanel";
 import { FolderPrompt } from "./components/FolderPrompt";
 import { ResultsPanel, type TabId } from "./components/ResultsPanel";
 import { useBatch } from "./hooks/useBatch";
-import { useSettings } from "./hooks/useSettings";
+import { readFit, useSettings } from "./hooks/useSettings";
 import { useSource } from "./hooks/useSource";
 import { folderSummary, type FolderSummary } from "./lib/backend";
 
@@ -33,7 +33,7 @@ function App() {
   const start = () => {
     setExisting(null);
     setTab("downloads");
-    batch.start(source.tasks, { nameTpl: settings.nameTpl, outDir: settings.outDir });
+    batch.start(source.tasks, { nameTpl: settings.nameTpl, outDir: settings.outDir, fit: readFit(settings).fit });
   };
 
   const requestStart = async () => {

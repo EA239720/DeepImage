@@ -4,6 +4,8 @@ use std::time::Duration;
 use reqwest::header::CONTENT_TYPE;
 use serde::Serialize;
 
+use crate::reshape::{reshape, Fit};
+
 /// Longest slice of a non-image response kept for the issue detail view.
 const BODY_PREVIEW_CHARS: usize = 2000;
 
@@ -20,6 +22,11 @@ pub enum Outcome {
         file: String,
         bytes: u64,
         content_type: String,
+        /// Size of the saved image when it was cropped or resized.
+        width: Option<u32>,
+        height: Option<u32>,
+        /// Why the saved image is not exactly the size asked for, when it is not.
+        note: Option<String>,
     },
     /// A successful response whose body is not an image (XML, HTML, …).
     NotImage {
@@ -79,12 +86,13 @@ pub fn http_client() -> reqwest::Client {
 }
 
 /// Requests `url` and, when the answer is an image, writes it to `dir` as `stem` plus the
-/// extension of the image type.
+/// extension of the image type, cropped or resized first when `fit` asks for it.
 pub async fn fetch_image(
     client: &reqwest::Client,
     url: &str,
     dir: &Path,
     stem: &str,
+    fit: Option<Fit>,
 ) -> Result<Outcome, DownloadError> {
     let response = client.get(url).send().await?;
     let status = response.status();
@@ -116,14 +124,32 @@ pub async fn fetch_image(
         });
     };
 
+    let reshaped = match fit {
+        Some(fit) => {
+            let (encoded, format) = (body.clone(), extension.clone());
+            // Decoding and resampling large images would stall the async runtime.
+            let work = tokio::task::spawn_blocking(move || reshape(&encoded, &format, fit));
+            Some(work.await.unwrap_or_else(|err| Err(format!("Se guardó con su tamaño original: {err}."))))
+        }
+        None => None,
+    };
+    let (contents, width, height, note) = match &reshaped {
+        Some(Ok(image)) => (&image.bytes[..], Some(image.width), Some(image.height), image.note.clone()),
+        Some(Err(note)) => (&body[..], None, None, Some(note.clone())),
+        None => (&body[..], None, None, None),
+    };
+
     let file = format!("{}.{extension}", sanitize_stem(stem));
     tokio::fs::create_dir_all(dir).await?;
-    tokio::fs::write(dir.join(&file), &body).await?;
+    tokio::fs::write(dir.join(&file), contents).await?;
 
     Ok(Outcome::Saved {
         file,
-        bytes: body.len() as u64,
+        bytes: contents.len() as u64,
         content_type,
+        width,
+        height,
+        note,
     })
 }
 
@@ -217,6 +243,18 @@ mod tests {
 
     const PNG: &[u8] = &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0];
     const JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F', b'I', b'F'];
+    /// A 1600 × 1600 PNG, built once for the server below.
+    fn big_png() -> &'static [u8] {
+        static PNG: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+        PNG.get_or_init(|| {
+            let mut out = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::new_rgb8(1600, 1600)
+                .write_to(&mut out, image::ImageFormat::Png)
+                .unwrap();
+            out.into_inner()
+        })
+    }
+
     const BLOB_NOT_FOUND: &str =
         "<?xml version=\"1.0\"?><Error><Code>BlobNotFound</Code></Error>";
 
@@ -237,6 +275,7 @@ mod tests {
                     let (status, content_type, body): (&str, &str, &[u8]) = match path {
                         "/a_1" => ("200 OK", "image/png", PNG),
                         "/a_2" => ("200 OK", "application/octet-stream", JPEG),
+                        "/big" => ("200 OK", "image/png", big_png()),
                         "/xml" => ("200 OK", "application/xml; charset=utf-8", BLOB_NOT_FOUND.as_bytes()),
                         _ => ("404 Not Found", "application/xml", BLOB_NOT_FOUND.as_bytes()),
                     };
@@ -265,26 +304,27 @@ mod tests {
         // The destination does not exist yet: saving creates it.
         let dir = scratch_dir("fetch").join("nested");
 
-        let saved = fetch_image(&client, &format!("{base}/a_1"), &dir, "CA-100.MAIN")
+        let saved = fetch_image(&client, &format!("{base}/a_1"), &dir, "CA-100.MAIN", None)
             .await
             .unwrap();
         match saved {
-            Outcome::Saved { file, bytes, content_type } => {
+            Outcome::Saved { file, bytes, content_type, width, note, .. } => {
                 assert_eq!(file, "CA-100.MAIN.png");
                 assert_eq!(bytes, PNG.len() as u64);
                 assert_eq!(content_type, "image/png");
+                assert_eq!((width, note), (None, None));
             }
             other => panic!("expected a saved image, got {other:?}"),
         }
         assert_eq!(std::fs::read(dir.join("CA-100.MAIN.png")).unwrap(), PNG);
 
         // Served as octet-stream: the extension comes from the bytes.
-        let sniffed = fetch_image(&client, &format!("{base}/a_2"), &dir, "CA-100.MAIN_2")
+        let sniffed = fetch_image(&client, &format!("{base}/a_2"), &dir, "CA-100.MAIN_2", None)
             .await
             .unwrap();
         assert!(matches!(sniffed, Outcome::Saved { ref file, .. } if file == "CA-100.MAIN_2.jpg"));
 
-        let xml = fetch_image(&client, &format!("{base}/xml"), &dir, "CA-101.MAIN")
+        let xml = fetch_image(&client, &format!("{base}/xml"), &dir, "CA-101.MAIN", None)
             .await
             .unwrap();
         match xml {
@@ -296,7 +336,7 @@ mod tests {
             other => panic!("expected a non-image answer, got {other:?}"),
         }
 
-        let missing = fetch_image(&client, &format!("{base}/a_3"), &dir, "CA-100.MAIN_3")
+        let missing = fetch_image(&client, &format!("{base}/a_3"), &dir, "CA-100.MAIN_3", None)
             .await
             .unwrap();
         match missing {
@@ -314,17 +354,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn crops_the_image_before_saving_it() {
+        use crate::reshape::FitMode;
+
+        let base = serve().await;
+        let client = http_client();
+        let dir = scratch_dir("fit");
+        let fit = Fit { mode: FitMode::Crop, width: 1000, height: 1000 };
+
+        let saved = fetch_image(&client, &format!("{base}/big"), &dir, "ES-91456-1.MAIN", Some(fit))
+            .await
+            .unwrap();
+        match saved {
+            Outcome::Saved { file, bytes, width, height, note, .. } => {
+                assert_eq!(file, "ES-91456-1.MAIN.png");
+                assert_eq!((width, height, note), (Some(1000), Some(1000), None));
+                let written = std::fs::read(dir.join(&file)).unwrap();
+                assert_eq!(bytes, written.len() as u64);
+                assert_eq!(image::load_from_memory(&written).unwrap().width(), 1000);
+            }
+            other => panic!("expected a saved image, got {other:?}"),
+        }
+
+        // A file the image crate cannot open is still saved, untouched, with a note.
+        let kept = fetch_image(&client, &format!("{base}/a_2"), &dir, "roto", Some(fit))
+            .await
+            .unwrap();
+        match kept {
+            Outcome::Saved { width, note, bytes, .. } => {
+                assert_eq!(width, None);
+                assert_eq!(bytes, JPEG.len() as u64);
+                assert!(note.unwrap().starts_with("Se guardó con su tamaño original"));
+            }
+            other => panic!("expected a saved image, got {other:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
     async fn classifies_failed_requests() {
         let client = http_client();
         let dir = scratch_dir("errors");
 
-        let invalid = fetch_image(&client, "sin-esquema/[clave]", &dir, "x")
+        let invalid = fetch_image(&client, "sin-esquema/[clave]", &dir, "x", None)
             .await
             .unwrap_err();
         assert_eq!(invalid.kind, "url");
 
         // Nothing listens on port 1.
-        let refused = fetch_image(&client, "http://127.0.0.1:1/x", &dir, "x")
+        let refused = fetch_image(&client, "http://127.0.0.1:1/x", &dir, "x", None)
             .await
             .unwrap_err();
         assert_eq!(refused.kind, "network");
@@ -337,10 +415,21 @@ mod tests {
             file: "a.jpg".into(),
             bytes: 3,
             content_type: "image/jpeg".into(),
+            width: Some(1000),
+            height: Some(800),
+            note: None,
         };
         assert_eq!(
             serde_json::to_value(saved).unwrap(),
-            serde_json::json!({ "kind": "saved", "file": "a.jpg", "bytes": 3, "contentType": "image/jpeg" })
+            serde_json::json!({
+                "kind": "saved",
+                "file": "a.jpg",
+                "bytes": 3,
+                "contentType": "image/jpeg",
+                "width": 1000,
+                "height": 800,
+                "note": null
+            })
         );
         let missing = Outcome::HttpError {
             status: 404,

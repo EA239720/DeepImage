@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { defaultOutDir } from "../lib/backend";
+import { defaultOutDir, type Fit } from "../lib/backend";
 import { OCR_FILTERS, type OcrFilter } from "../lib/ocr";
+import { readWholeNumber, type Reading } from "../lib/validation";
 
 /**
  * Where the list of images comes from: keys typed in, or read from images, run through a URL
@@ -9,6 +10,14 @@ import { OCR_FILTERS, type OcrFilter } from "../lib/ocr";
 export type SourceMode = "keys" | "table" | "images";
 
 const SOURCE_MODES: SourceMode[] = ["keys", "table", "images"];
+
+/** Whether saved images keep the size they came in, or are cropped or resized to a given one. */
+export type SizeMode = "original" | Fit["mode"];
+
+const SIZE_MODES: SizeMode[] = ["original", "crop", "resize"];
+
+/** The largest width or height that can be asked for. */
+export const MAX_SIDE = 10_000;
 
 export interface Settings {
   mode: SourceMode;
@@ -23,6 +32,10 @@ export interface Settings {
   nameTpl: string;
   max: number;
   outDir: string;
+  sizeMode: SizeMode;
+  /** Width and height as typed: they only take effect once they are valid. */
+  sizeWidth: string;
+  sizeHeight: string;
 }
 
 /** Quick picks for the images per key; any whole number up to MAX_LIMIT can be typed instead. */
@@ -36,16 +49,28 @@ function isValidMax(value: unknown): value is number {
 }
 
 /** Reads a typed number of images per key. An empty field is neither a value nor an error. */
-export function readMax(text: string): { value: number | null; error: string | null } {
-  const typed = text.trim();
-  if (!typed) return { value: null, error: null };
-  if (/\p{L}/u.test(typed)) return { value: null, error: "Solo se admiten números: quita las letras." };
-  if (/\D/.test(typed)) {
-    return { value: null, error: "Escribe un número entero, sin espacios, signos ni decimales." };
-  }
-  const value = Number(typed);
-  if (!isValidMax(value)) return { value: null, error: `Elige un número entre 1 y ${MAX_LIMIT}.` };
-  return { value, error: null };
+export function readMax(text: string) {
+  return readWholeNumber(text, 1, MAX_LIMIT);
+}
+
+/** Reads a typed width or height, which is required once the size is not the original. */
+function readSide(text: string, name: string): Reading {
+  const reading = readWholeNumber(text, 1, MAX_SIDE);
+  return reading.value === null && reading.error === null
+    ? { value: null, error: `Escribe el ${name} en píxeles.` }
+    : reading;
+}
+
+/** The size saved images must have, or why the typed one is not valid. */
+export function readFit({ sizeMode, sizeWidth, sizeHeight }: Settings) {
+  if (sizeMode === "original") return { fit: null, width: null, height: null };
+  const width = readSide(sizeWidth, "ancho");
+  const height = readSide(sizeHeight, "alto");
+  const fit: Fit | null =
+    width.value !== null && height.value !== null
+      ? { mode: sizeMode, width: width.value, height: height.value }
+      : null;
+  return { fit, width, height };
 }
 
 const STORAGE_KEY = "lote.settings.v1";
@@ -60,6 +85,9 @@ const DEFAULTS: Settings = {
   nameTpl: "[clave].MAIN",
   max: 3,
   outDir: "",
+  sizeMode: "original",
+  sizeWidth: "1000",
+  sizeHeight: "1000",
 };
 
 function load(): Settings {
@@ -69,6 +97,9 @@ function load(): Settings {
     if (!isValidMax(settings.max)) settings.max = DEFAULTS.max;
     if (!SOURCE_MODES.includes(settings.mode)) settings.mode = DEFAULTS.mode;
     if (!OCR_FILTERS.includes(settings.ocrFilter)) settings.ocrFilter = DEFAULTS.ocrFilter;
+    if (!SIZE_MODES.includes(settings.sizeMode)) settings.sizeMode = DEFAULTS.sizeMode;
+    if (typeof settings.sizeWidth !== "string") settings.sizeWidth = DEFAULTS.sizeWidth;
+    if (typeof settings.sizeHeight !== "string") settings.sizeHeight = DEFAULTS.sizeHeight;
     return settings;
   } catch {
     return DEFAULTS;

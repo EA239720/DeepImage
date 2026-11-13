@@ -11,8 +11,20 @@ interface ResponseInfo {
   body: string;
 }
 
+export interface SavedImage {
+  kind: "saved";
+  file: string;
+  bytes: number;
+  contentType: string;
+  /** Size of the saved image when it was cropped or resized. */
+  width: number | null;
+  height: number | null;
+  /** Why the saved image is not exactly the size asked for, when it is not. */
+  note: string | null;
+}
+
 export type Outcome =
-  | { kind: "saved"; file: string; bytes: number; contentType: string }
+  | SavedImage
   | ({ kind: "notImage" } & ResponseInfo)
   | ({ kind: "httpError" } & ResponseInfo);
 
@@ -23,9 +35,17 @@ export interface DownloadError {
   message: string;
 }
 
-/** Requests `url` and saves it in `dir` as `stem` plus the image's extension. */
-export function downloadImage(url: string, dir: string, stem: string) {
-  return invoke<Outcome>("download_image", { url, dir, stem });
+/** The size, in pixels, every saved image should have. */
+export interface Fit {
+  /** `crop` cuts the edges around the center; `resize` scales the whole image to the size. */
+  mode: "crop" | "resize";
+  width: number;
+  height: number;
+}
+
+/** Requests `url` and saves it in `dir` as `stem` plus the image's extension, fitted to `fit` if given. */
+export function downloadImage(url: string, dir: string, stem: string, fit: Fit | null) {
+  return invoke<Outcome>("download_image", { url, dir, stem, fit });
 }
 
 export function toDownloadError(error: unknown): DownloadError {

@@ -192,11 +192,21 @@ function DownloadsTable({ downloads }: { downloads: Download[] }) {
               </Table.Cell>
               <Table.Cell fontFamily="mono" fontSize="12.5px" color="accent" whiteSpace="nowrap">
                 {d.file}
+                {d.note && (
+                  <Box as="span" display="inline-flex" verticalAlign="middle" ml="6px" color="warning" title={d.note}>
+                    <WarningCircleIcon aria-label={d.note} />
+                  </Box>
+                )}
               </Table.Cell>
               <Table.Cell fontFamily="mono" fontSize="12px" color="fg.muted" maxW="280px" truncate title={d.url}>
                 {d.url}
               </Table.Cell>
               <Table.Cell textAlign="right" color="fg.muted" fontVariantNumeric="tabular-nums" whiteSpace="nowrap">
+                {d.width !== null && d.height !== null && (
+                  <Box as="span" color="fg.subtle">
+                    {d.width} × {d.height} ·{" "}
+                  </Box>
+                )}
                 {formatBytes(d.bytes)}
               </Table.Cell>
             </Table.Row>

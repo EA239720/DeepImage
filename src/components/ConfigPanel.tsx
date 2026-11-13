@@ -13,7 +13,14 @@ import {
   TableIcon,
 } from "@phosphor-icons/react";
 import type { Batch } from "../hooks/useBatch";
-import { MAX_OPTIONS, readMax, type Settings, type SourceMode, type UpdateSettings } from "../hooks/useSettings";
+import {
+  MAX_OPTIONS,
+  readFit,
+  readMax,
+  type Settings,
+  type SourceMode,
+  type UpdateSettings,
+} from "../hooks/useSettings";
 import type { Source } from "../hooks/useSource";
 import { pickFolder } from "../lib/backend";
 import { buildStem, count, FIRST_N, KEY_TOKEN, N_TOKEN, sanitizeStem } from "../lib/templates";
@@ -21,6 +28,7 @@ import { ColorModeButton } from "./ColorModeButton";
 import { fieldStyles, Hint, labelStyles, Preview, Token, TokenInserts } from "./config/fields";
 import { ImagesSource } from "./config/ImagesSource";
 import { KeysSource } from "./config/KeysSource";
+import { SizeField } from "./config/SizeField";
 import { TableSource } from "./config/TableSource";
 import { TabTrigger } from "./TabTrigger";
 import { Btn, inputStyles, Mono, monoStyles } from "./ui";
@@ -44,6 +52,8 @@ export function ConfigPanel({ settings, update, source, batch, starting, onStart
   const [maxText, setMaxText] = useState(() => (MAX_OPTIONS.includes(settings.max) ? "" : String(settings.max)));
   // A batch of keys does not start while that field holds something that is not a valid number.
   const maxInvalid = mode !== "table" && readMax(maxText).error !== null;
+  // Nor while a size to crop or resize to is asked for but not valid.
+  const sizeInvalid = settings.sizeMode !== "original" && readFit(settings).fit === null;
 
   const chooseFolder = async () => {
     const dir = await pickFolder(outDir).catch(() => null);
@@ -138,6 +148,8 @@ export function ConfigPanel({ settings, update, source, batch, starting, onStart
           )}
         </Field.Root>
 
+        <SizeField settings={settings} update={update} locked={locked} />
+
         <Field.Root unstyled disabled={locked} css={fieldStyles}>
           <Field.Label css={labelStyles}>Carpeta de destino</Field.Label>
           <Flex gap="8px">
@@ -162,7 +174,7 @@ export function ConfigPanel({ settings, update, source, batch, starting, onStart
             variant="primary"
             flex="1"
             height="40px"
-            disabled={starting || !source.ready || !outDir || maxInvalid}
+            disabled={starting || !source.ready || !outDir || maxInvalid || sizeInvalid}
             onClick={onStart}
           >
             <DownloadSimpleIcon />

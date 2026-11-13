@@ -4,6 +4,7 @@ import {
   toDownloadError,
   type DownloadError,
   type FailedResponse,
+  type Fit,
 } from "../lib/backend";
 import type { Task } from "../lib/tasks";
 import { buildStem, FIRST_N } from "../lib/templates";
@@ -20,6 +21,11 @@ export interface Download {
   file: string;
   url: string;
   bytes: number;
+  /** Size of the saved image when it was cropped or resized. */
+  width: number | null;
+  height: number | null;
+  /** Why the saved image is not exactly the size asked for, when it is not. */
+  note: string | null;
 }
 
 export type IssueKind = "notfound" | "xml" | "notimage" | "http" | DownloadError["kind"];
@@ -42,6 +48,8 @@ export interface Issue {
 export interface Job {
   nameTpl: string;
   outDir: string;
+  /** The size every image is cropped or resized to, or `null` to keep it. */
+  fit: Fit | null;
 }
 
 interface BatchState {
@@ -195,7 +203,7 @@ export function useBatch() {
 
           try {
             const stem = buildStem(job.nameTpl, key, FIRST_N + offset);
-            const outcome = await downloadImage(url, job.outDir, stem);
+            const outcome = await downloadImage(url, job.outDir, stem, job.fit);
             if (!live()) return;
             if (outcome.kind === "saved") {
               saved++;
@@ -207,6 +215,9 @@ export function useBatch() {
                 file: outcome.file,
                 url,
                 bytes: outcome.bytes,
+                width: outcome.width,
+                height: outcome.height,
+                note: outcome.note,
               };
               setState((s) => ({ ...s, downloads: [entry, ...s.downloads] }));
               continue;
